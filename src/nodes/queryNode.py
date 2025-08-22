@@ -2,9 +2,8 @@ from datetime import datetime
 from typing_extensions import Literal
 
 from src.llms.groqllm import GroqLLM
-from langchain_core.messages import HumanMessage, AIMessage, get_buffer_string
+from langchain_core.messages import HumanMessage, SystemMessage, AIMessage, get_buffer_string
 from langgraph.types import Command
-from langgraph.graph import END, START
 
 from src.utils.prompts import clarification_with_user_instructions, transform_messages_into_customer_query_brief_prompt
 from src.states.queryState import SparrowAgentState, ClarifyWithUser, CustomerQuestion
@@ -24,7 +23,11 @@ def clarify_with_user(state:SparrowAgentState) -> Command[Literal["write_query_b
 
     structured_output_model = model.with_structured_output(ClarifyWithUser)
 
+   
     response = structured_output_model.invoke([
+        SystemMessage(
+                content="Route the input to yes or no based on the need of clarification of the query"
+            ),
         HumanMessage(
             content=clarification_with_user_instructions.format(
                 messages=get_buffer_string(messages=state["messages"]),
@@ -35,9 +38,9 @@ def clarify_with_user(state:SparrowAgentState) -> Command[Literal["write_query_b
     )
     print("RESPONSE", response)
 
-    if response.need_clarification:
+    if response.need_clarification == 'yes':
         return Command(
-            goto=END,
+            goto="need_clarification",
             update={"messages": [AIMessage(content=response.question)]}
         )
     else:

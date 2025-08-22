@@ -22,12 +22,12 @@ Respond in valid JSON format with these exact keys:
 "verification": "<verification message that we will start processing the parcel request>"
 
 If you need to ask a clarifying question, return:
-"need_clarification": true,
+"need_clarification": "yes",
 "question": "<your clarifying question>",
 "verification": ""
 
 If you do not need to ask a clarifying question, return:
-"need_clarification": false,
+"need_clarification": "no",
 "question": "",
 "verification": "<acknowledgement message that you will now start processing or tracking the parcel>"
 

@@ -1,5 +1,5 @@
 import operator 
-from typing_extensions import Optional, Annotated, List, Sequence
+from typing_extensions import Optional, Annotated, List, Sequence, Literal
 
 from langchain_core.messages import BaseMessage
 from langgraph.graph import MessagesState
@@ -28,7 +28,7 @@ class SparrowAgentState(MessagesState):
 class ClarifyWithUser(BaseModel):
     """Schema for user clarification decision and questions"""
 
-    need_clarification: bool = Field(
+    need_clarification: Literal["yes", "no"] = Field(
         description="Whether the user needs to be asked a clarifying question"
     )
     question: str = Field(
