@@ -93,3 +93,18 @@ def estimated_time_analysis(destination: str, origin: str) -> str:
     """
     print("estimate time analysis tool called")
     return f"Estimated time analysis for the parcel delivery from {origin} to {destination} is 2 days 50 minutes"
+
+@tool
+def conduct_execution(execution_jobs: str) -> str:
+    """
+    Tool for delegating an execution task to a specialized sub-agent.
+    """
+    return f"Delegated execution job: {execution_jobs}"
+
+
+@tool
+def execution_complete() -> str:
+    """
+    Tool for indicating the execution process is complete.
+    """
+    return "Execution complete."

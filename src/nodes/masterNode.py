@@ -1,55 +1,59 @@
 from langchain_core.messages import SystemMessage, HumanMessage
 from src.llms.groqllm import GroqLLM
-from src.states.masterState import MasterState
-from src.graphs.actionGraph import graph
-
-router_prompt = """
-You are the MASTER AGENT. 
-Decide which specialist agent should handle the user request.
-
-Options:
-- "track_parcel" → use the Parcel Tracking Agent
-- "eta_analysis" → use the ETA Analysis Agent
-- "user_info" → use the User Info Agent
-
-Respond ONLY with one job_type.
-"""
-
-model = GroqLLM().get_llm()
+from src.states.masterState import MasterState, ExecutorState
+from src.nodes.actionNode import ExecutorNode
+import asyncio
+from typing import List, Dict
 
 
-def route_job(state: MasterState) -> MasterState:
-    messages = [SystemMessage(content=router_prompt)] + state["master_messages"]
-    response = model.invoke(messages)
-    job_type = response.content.strip()
-    return {**state, "job_type": job_type}
+class MasterNode:
+    def __init__(self, llm: GroqLLM):
+        self.llm = llm
 
-def run_sub_agent(state: MasterState) -> MasterState:
-    job = state["job_type"]
-    user_message = state["master_messages"][-1]
+    async def master_llm_node(self, state: MasterState) -> MasterState:
+        messages = [
+            SystemMessage(content="You are the master agent. Analyze the query and split it into the minimum number of necessary sub-tasks for efficient parallel execution."),
+            HumanMessage(content=f"Query brief: {state.get('query_brief', '')}")
+        ]
+        try:
+            response = await self.llm.ainvoke(messages)
+            sub_tasks = [task.strip() for task in response.content.split(",") if task.strip()]
+            state['sub_tasks'] = sub_tasks
+            print(sub_tasks)  # print AFTER assignment
+        except Exception as e:
+            state['sub_tasks'] = []
+            state['error'] = f"LLM invocation failed: {str(e)}"
+        return state
 
-    if job == "track_parcel":
-        executor_state = {
-            "executor_messages": [user_message],
-            "execution_job": "track_parcel",
-            "executor_data": [],
-            "iteration_count": 0,
-        }
-        result = graph.invoke(executor_state)   # call your existing executor agent
+    async def delegate_to_workers(self, state: MasterState) -> MasterState:
+        if not state.get('sub_tasks'):
+            state['sub_agent_output'] = "No valid sub-tasks generated."
+            return state
 
-    elif job == "eta_analysis":
-        # TODO: call ETA agent graph
-        result = {"output": "ETA is approx 2 days", "executor_data": [], "executor_messages": []}
+        async def process_task(task: str) -> Dict:
+            executor_node = ExecutorNode(self.llm)
+            executor_state = {
+                "executor_messages": [],
+                "execution_job": task,
+                "executor_data": []
+            }
+            try:
+                executor_state = await executor_node.llm_call(executor_state)
+                executor_state = await executor_node.tool_node(executor_state)
+                return executor_node.compress_execution(executor_state)
+            except Exception as e:
+                return {"output": f"Task failed: {str(e)}"}
 
-    elif job == "user_info":
-        # TODO: call User Info agent graph
-        result = {"output": "User is premium member", "executor_data": [], "executor_messages": []}
+        tasks = [process_task(task) for task in state['sub_tasks']]
+        worker_outputs = await asyncio.gather(*tasks, return_exceptions=True)
 
-    else:
-        result = {"output": f"No sub-agent found for {job}", "executor_data": [], "executor_messages": []}
+        valid_outputs = [
+            output.get("output", "") if isinstance(output, dict) else f"Task failed: {str(output)}"
+            for output in worker_outputs
+        ]
+        state['sub_agent_output'] = "\n".join(valid_outputs)
+        return state
 
-    return {**state, "sub_agent_output": result["output"]}
-
-def master_compress(state: MasterState) -> MasterState:
-    summary = f"Job: {state['job_type']}\nResult: {state['sub_agent_output']}"
-    return {**state, "sub_agent_output": summary}
+    async def complete_execution(self, state: MasterState) -> MasterState:
+        state['sub_agent_output'] = state.get('sub_agent_output', "No output generated.")
+        return state

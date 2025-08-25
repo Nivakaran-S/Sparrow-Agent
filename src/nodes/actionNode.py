@@ -1,140 +1,97 @@
-
 from pydantic import BaseModel, Field
-from typing_extensions import Literal
-
-from langgraph.graph import StateGraph, START, END 
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage, filter_messages
-from src.llms.groqllm import GroqLLM
-
-from src.states.actionState import ExecutorState, ExecutorOutputState
-from src.utils.utils import get_today_str, think_tool, track_package, get_user_information, estimated_time_analysis
 from src.utils.prompts import execution_agent_prompt, compress_execution_system_prompt, compress_execution_human_message
+from src.utils.utils import think_tool, track_package, get_user_information, estimated_time_analysis
 
-tools = [think_tool, track_package, get_user_information, estimated_time_analysis]  
+tools = [think_tool, track_package, get_user_information, estimated_time_analysis]
 tools_by_name = {tool.name: tool for tool in tools}
 
 
-## Agent Node
 class ExecutorNode:
     """
-    A class to represent executor node
-
+    Executor node for handling tasks:
+    1. LLM reasoning
+    2. Tool invocation
+    3. Final compression
     """
+
     def __init__(self, llm):
-        self.llm = llm 
+        self.llm = llm
         self.model_with_tools = llm.bind_tools(tools)
         self.MAX_ITERATIONS = 5
 
-    def llm_call(self, state: ExecutorState) -> ExecutorState:
+    def llm_call(self, state: dict) -> dict:
         """
-        Main agent LLM call.
-
-        Prepends a system prompt and feeds in the executor message history.
-        Returns the updated state with the LLM's output message.
+        Calls the LLM with the executor message history and returns updated state.
         """
         messages = [SystemMessage(content=execution_agent_prompt)] + state.get("executor_messages", [])
-        response = self.model_with_tools.invoke(messages, config={"tools": tools})
+        response = self.model_with_tools.invoke(messages)
 
         return {
-            "executor_messages": state.get("executor_messages", []) + [response],
-            "execution_job": state.get("execution_job", ""),   # preserve context
-            "executor_data": state.get("executor_data", []),   # preserve collected data
+            **state,
+            "executor_messages": state.get("executor_messages", []) + [response]
         }
 
-
-    ## Tool Execution Node
-    def tool_node(self, state: ExecutorState) -> ExecutorState:
+    def tool_node(self, state: dict) -> dict:
         """
-        Execute any tool calls requested by the latest LLM message.
-        Appends tool outputs as ToolMessages to the executor_messages,
-        and stores results in executor_data.
+        Executes any tools requested by the LLM and appends ToolMessages.
         """
         last_message = state.get("executor_messages", [])[-1] if state.get("executor_messages") else None
         tool_calls = getattr(last_message, "tool_calls", []) if last_message else []
 
-        tool_outputs = []
-        new_data = []
-        for tool_call in tool_calls:
-            tool_name = tool_call.get("name")
-            args = tool_call.get("args", {})
-            tool_id = tool_call.get("id")
-
+        tool_outputs, new_data = [], []
+        for call in tool_calls:
+            tool_name, args, tool_id = call.get("name"), call.get("args", {}), call.get("id")
             if tool_name in tools_by_name:
                 try:
                     result = tools_by_name[tool_name].invoke(args)
-                    tool_outputs.append(
-                        ToolMessage(content=str(result), name=tool_name, tool_call_id=tool_id)
-                    )
+                    tool_outputs.append(ToolMessage(content=str(result), name=tool_name, tool_call_id=tool_id))
                     new_data.append(str(result))
                 except Exception as e:
-                    error_msg = f"Tool {tool_name} failed: {str(e)}"
-                    tool_outputs.append(
-                        ToolMessage(content=error_msg, name=tool_name, tool_call_id=tool_id)
-                    )
+                    error_msg = f"Tool {tool_name} failed: {e}"
+                    tool_outputs.append(ToolMessage(content=error_msg, name=tool_name, tool_call_id=tool_id))
                     new_data.append(error_msg)
 
         return {
+            **state,
             "executor_messages": state.get("executor_messages", []) + tool_outputs,
-            "execution_job": state.get("execution_job", ""),
-            "executor_data": state.get("executor_data", []) + new_data,
+            "executor_data": state.get("executor_data", []) + new_data
         }
 
-
-    ## Compression / Finalization Node
-    def compress_execution(self, state: ExecutorState) -> ExecutorOutputState:
+    def compress_execution(self, state: dict) -> dict:
         """
-        Summarize the execution into a final concise output.
-
-        Produces an ExecutorOutputState that includes:
-        - output: final answer
-        - executor_data: aggregated tool results
-        - executor_messages: full conversation trace
+        Summarizes the execution and returns final structured output.
         """
-        system_message = compress_execution_system_prompt
-
         messages = [
-            SystemMessage(content=system_message),
+            SystemMessage(content=compress_execution_system_prompt),
             *state.get("executor_messages", []),
-            HumanMessage(
-                content=compress_execution_human_message.format(
-                    shipment_request="Track parcel ABC123"
-                )
-            )
+            HumanMessage(content=compress_execution_human_message.format(shipment_request="Track parcel ABC123"))
         ]
 
-        response = self.llm.invoke(messages)   # Final summary, no tools required
+        response = self.llm.invoke(messages)
 
         executor_data = [
             str(m.content)
-            for m in filter_messages(
-                state.get("executor_messages", []),
-                include_types=["tool", "ai"]
-            )
+            for m in filter_messages(state.get("executor_messages", []), include_types=["tool", "ai"])
         ]
 
-        return ExecutorOutputState(
-            output=str(response.content),
-            executor_data=executor_data,
-            executor_messages=state.get("executor_messages", []),
-        )
+        return {
+            "output": str(response.content),
+            "executor_data": executor_data,
+            "executor_messages": state.get("executor_messages", [])
+        }
 
-    
-
-    def route_after_llm(self, state: ExecutorState):
-        """Decide whether to call a tool or finalize."""
+    def route_after_llm(self, state: dict) -> str:
+        """Route: decide whether to call a tool or finalize."""
         last_msg = state["executor_messages"][-1]
-        if getattr(last_msg, "tool_calls", None):
-            return "tool_node"
-        return "compress_execution"
+        return "tool_node" if getattr(last_msg, "tool_calls", None) else "compress_execution"
 
-    def guard_llm(self, state: ExecutorState):
+    def guard_llm(self, state: dict) -> str:
         """
-        Router with iteration safeguard.
-        Prevents infinite tool/LLM loops.
+        Prevent infinite loops by limiting iterations.
         """
         iteration_count = state.get("iteration_count", 0) + 1
         state["iteration_count"] = iteration_count
         if iteration_count > self.MAX_ITERATIONS:
-            # Force finalize if too many iterations
             return "compress_execution"
         return self.route_after_llm(state)
