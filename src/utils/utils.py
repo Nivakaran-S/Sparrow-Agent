@@ -57,9 +57,11 @@ def track_package(tracking_number: str):
       A string describing information on the parcel status
     """
 
-    print("track package tool called")
-    
-    return f"Parcel Tracking Update: The parcel with tracking number {tracking_number} is currently in Colombo."
+    dummy_db = {
+        "ABC123": "Parcel is in transit, expected delivery tomorrow.",
+        "XYZ999": "Parcel delivered at 2 PM today.",
+    }
+    return dummy_db.get(tracking_number, "Tracking ID not found.")
 
 @tool(description="Retrieve user information based on their user ID.")
 def get_user_information(userId: str) -> str:

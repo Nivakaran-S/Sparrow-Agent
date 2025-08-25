@@ -16,84 +16,96 @@ model = GroqLLM().get_llm()
 model_with_tools = model.bind_tools(tools)
 
 
-## Agent Nodes
+## Agent Node
 def llm_call(state: ExecutorState) -> ExecutorState:
     """
-    Analyze current state and decide on next actions.
+    Main agent LLM call.
 
-    The model analyzes the current conversation state and decides whether to:
-    1. Call search tools to gather more information
-    2. Provide a final answer based on gathered information
-
-    Returns updated state with the model's response.
+    Prepends a system prompt and feeds in the executor message history.
+    Returns the updated state with the LLM's output message.
     """
     messages = [SystemMessage(content=execution_agent_prompt)] + state.get("executor_messages", [])
     response = model_with_tools.invoke(messages, config={"tools": tools})
 
     return {
-        "executor_messages": state.get("executor_messages", []) + [response]
+        "executor_messages": state.get("executor_messages", []) + [response],
+        "execution_job": state.get("execution_job", ""),   # preserve context
+        "executor_data": state.get("executor_data", []),   # preserve collected data
     }
 
+
+## Tool Execution Node
 def tool_node(state: ExecutorState) -> ExecutorState:
     """
-    Execute all tool calls from the previous LLM responses.
-    Returns updated state with tool execution results.
+    Execute any tool calls requested by the latest LLM message.
+    Appends tool outputs as ToolMessages to the executor_messages,
+    and stores results in executor_data.
     """
     last_message = state.get("executor_messages", [])[-1] if state.get("executor_messages") else None
     tool_calls = getattr(last_message, "tool_calls", []) if last_message else []
 
     tool_outputs = []
+    new_data = []
     for tool_call in tool_calls:
         tool_name = tool_call.get("name")
         args = tool_call.get("args", {})
         tool_id = tool_call.get("id")
+
         if tool_name in tools_by_name:
             try:
                 result = tools_by_name[tool_name].invoke(args)
-                tool_outputs.append(ToolMessage(
-                    content=str(result),
-                    name=tool_name,
-                    tool_call_id=tool_id
-                ))
+                tool_outputs.append(
+                    ToolMessage(content=str(result), name=tool_name, tool_call_id=tool_id)
+                )
+                new_data.append(str(result))
             except Exception as e:
-                tool_outputs.append(ToolMessage(
-                    content=f"Tool {tool_name} failed: {str(e)}",
-                    name=tool_name,
-                    tool_call_id=tool_id
-                ))
-    
+                error_msg = f"Tool {tool_name} failed: {str(e)}"
+                tool_outputs.append(
+                    ToolMessage(content=error_msg, name=tool_name, tool_call_id=tool_id)
+                )
+                new_data.append(error_msg)
+
     return {
-        "executor_messages": state.get("executor_messages", []) + tool_outputs
+        "executor_messages": state.get("executor_messages", []) + tool_outputs,
+        "execution_job": state.get("execution_job", ""),
+        "executor_data": state.get("executor_data", []) + new_data,
     }
 
-def compress_execution(state:ExecutorState) -> dict:
-    """
-    Compress execution findings into a concise summary
 
-    Tasks all the execution messages and tool outputs and creates a compressed summary suitable for the master's decision-making.
+## Compression / Finalization Node
+def compress_execution(state: ExecutorState) -> ExecutorOutputState:
     """
+    Summarize the execution into a final concise output.
 
+    Produces an ExecutorOutputState that includes:
+    - output: final answer
+    - executor_data: aggregated tool results
+    - executor_messages: full conversation trace
+    """
     system_message = compress_execution_system_prompt
-    print(state['executor_messages'])
 
     messages = [
         SystemMessage(content=system_message),
         *state.get("executor_messages", []),
-        HumanMessage(content=compress_execution_human_message.format(shipment_request="Track parcel ABC123"))
-    ]
-
-    # Use model_with_tools if you need tool calls
-    response = model_with_tools.invoke(messages, config={"tools": tools})
-
-    executor_data = [
-        str(m.content) for m in filter_messages(
-            state.get("executor_messages", []),
-            include_types=["tools", "ai"]
+        HumanMessage(
+            content=compress_execution_human_message.format(
+                shipment_request="Track parcel ABC123"
+            )
         )
     ]
 
-    return {
-        "output": str(response.content),
-        "executor_data": "\n".join(executor_data)
-    }
+    response = model.invoke(messages)   # Final summary, no tools required
 
+    executor_data = [
+        str(m.content)
+        for m in filter_messages(
+            state.get("executor_messages", []),
+            include_types=["tool", "ai"]
+        )
+    ]
+
+    return ExecutorOutputState(
+        output=str(response.content),
+        executor_data=executor_data,
+        executor_messages=state.get("executor_messages", []),
+    )
