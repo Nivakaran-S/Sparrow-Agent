@@ -1,4 +1,4 @@
-# Sparrow Agent Chatbot - Advanced Agentic AI System
+# Sparrow Agent Chatbot - Parcel Consolidation And Tracking Agentic AI System
 
 ## Overview
 Welcome to Sparrow, a cutting-edge agentic AI chatbot engineered with LangGraph and powered by Groq's high-performance LLM. Designed for a parcel consolidation and tracking platform, Sparrow exemplifies scalable, intelligent automation, delivering seamless user assistance through sophisticated natural language processing and dynamic workflow orchestration. This project is a testament to modern AI engineering, blending modularity, efficiency, and extensibility.
