@@ -1,99 +1,119 @@
+
+
+
+
 from datetime import datetime
 from typing_extensions import Literal
-
 from src.llms.groqllm import GroqLLM
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage, get_buffer_string
-from langgraph.types import Command
-
 from src.utils.prompts import clarification_with_user_instructions, transform_messages_into_customer_query_brief_prompt
 from src.states.queryState import SparrowAgentState, ClarifyWithUser, CustomerQuestion
-
 from src.utils.utils import get_today_str
-
-
 
 class QueryNode:
     def __init__(self, llm):
-        self.llm = llm 
-
-    def clarify_with_user(self, state:SparrowAgentState) -> Command[Literal["write_query_brief", "__end__"]]:
+        self.llm = llm
+        
+    def clarify_with_user(self, state: SparrowAgentState) -> SparrowAgentState:
         """
-        Determine if the user's request contains sufficient information to proceed with customer request.
-
-        Uses structured output to make deterministic decisions and avoid hallucinations.
-        Routes to either customer query brief generation or ends with clarification question.
-
+        Determine if the user's request contains sufficient information to proceed.
+        Returns updated state with clarification status.
         """
-
         structured_output_model = self.llm.with_structured_output(ClarifyWithUser)
-
-    
-        response = structured_output_model.invoke([
-            SystemMessage(
+        
+        try:
+            response = structured_output_model.invoke([
+                SystemMessage(
                     content="Route the input to yes or no based on the need of clarification of the query"
                 ),
-            HumanMessage(
-                content=clarification_with_user_instructions.format(
-                    messages=get_buffer_string(messages=state["messages"]),
-                    date=get_today_str()
+                HumanMessage(
+                    content=clarification_with_user_instructions.format(
+                        messages=get_buffer_string(messages=state.get("messages", [])),
+                        date=get_today_str()
+                    )
                 )
-            )
-            ], 
-        )
-        print("RESPONSE", response)
+            ])
+            
+            print("CLARIFICATION RESPONSE:", response)
+            
+            # Update state based on response
+            updated_state = {**state}
+            
+            if response.need_clarification == 'yes':
+                updated_state.update({
+                    "messages": state.get("messages", []) + [AIMessage(content=response.question)],
+                    "clarification_complete": False,
+                    "needs_clarification": True
+                })
+            else:
+                updated_state.update({
+                    "messages": state.get("messages", []) + [AIMessage(content=response.verification)],
+                    "clarification_complete": True,
+                    "needs_clarification": False
+                })
+            
+            return updated_state
+            
+        except Exception as e:
+            print(f"Error in clarify_with_user: {e}")
+            return {
+                **state,
+                "clarification_complete": False,
+                "needs_clarification": True,
+                "error": str(e)
+            }
 
-        if response.need_clarification == 'yes':
-            return Command(
-                goto="need_clarification",
-                update={"messages": [AIMessage(content=response.question)]}
-            )
-        else:
-            return Command(
-                goto="write_query_brief",
-                update={"messages": [AIMessage(content=response.verification)]}
-            )
-        
-    def write_query_brief(self, state: SparrowAgentState):
+    def write_query_brief(self, state: SparrowAgentState) -> SparrowAgentState:
         """
         Transform the conversation history into a comprehensive customer query brief.
-
-        Uses structured output to ensure the brief follows the required format 
-        and contains all necessary details for effective research.
         """
-        structured_output_model = self.llm.with_structured_output(CustomerQuestion)
-
-        messages = state.get("messages", [])
-        print("STATE MESSAGES:", state.get("messages", []))
-
-        if not messages:
-            print("ERROR: No messages in state")
+        try:
+            structured_output_model = self.llm.with_structured_output(CustomerQuestion)
+            
+            messages = state.get("messages", [])
+            print("STATE MESSAGES:", messages)
+            
+            if not messages:
+                print("ERROR: No messages in state")
+                return {
+                    **state,
+                    "query_brief": "",
+                    "error": "No messages available for query brief creation"
+                }
+            
+            prompt = transform_messages_into_customer_query_brief_prompt.format(
+                messages=get_buffer_string(messages),
+                date=get_today_str()
+            )
+            print("PROMPT:", prompt)
+            
+            # Test raw response first
+            raw_response = self.llm.invoke([HumanMessage(content=prompt)])
+            print("RAW MODEL RESPONSE:", raw_response)
+            
+            # Get structured response
+            response = structured_output_model.invoke([HumanMessage(content=prompt)])
+            print("STRUCTURED RESPONSE:", response)
+            
+            if response is None:
+                print("ERROR: Structured response is None")
+                return {
+                    **state,
+                    "query_brief": "",
+                    "error": "Failed to generate structured response"
+                }
+            
             return {
-                "query_brief": "",
-                "master_messages": []
+                **state,
+                "query_brief": response.query_brief,
+                "master_messages": [HumanMessage(content=response.query_brief)],
+                "query_brief_complete": True
             }
-        
-        prompt = transform_messages_into_customer_query_brief_prompt.format(
-            messages=get_buffer_string(messages),
-            date=get_today_str()
-        )
-        print("PROMPT", prompt)
-
-        raw_response = self.llm.invoke([HumanMessage(content=prompt)])
-        print("RAW MODEL RESPONSE:", raw_response)
-
-        response = structured_output_model.invoke([HumanMessage(content=prompt)])
-        print("STRUCTURED RESPONSE:", response)
-
-        if response is None:
-            print("ERROR: Structured response is None")
+            
+        except Exception as e:
+            print(f"Error in write_query_brief: {e}")
             return {
+                **state,
                 "query_brief": "",
-                "master_messages": []
+                "error": str(e)
             }
-
-        
-        return {
-            "query_brief": response.query_brief,
-            "master_messages": [HumanMessage(content=response.query_brief)]
-        }
-        

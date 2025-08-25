@@ -5,70 +5,96 @@ from src.nodes.actionNode import ExecutorNode
 import asyncio
 from typing import List, Dict
 from src.utils.prompts import master_agent_prompt
+from src.states.masterState import PlannerOutput
+from langgraph.constants import Send
+from src.graphs.actionGraph import graph
 
-class MasterNode:
-    def __init__(self, llm: GroqLLM):
+class MasterOrchestrator:
+    def __init__(self, llm):
         self.llm = llm
-        self.executor_node = ExecutorNode(llm)  # Reuse ExecutorNode instance
-
-    async def master_llm_node(self, state: MasterState) -> MasterState:
-        if 'query_brief' not in state or not isinstance(state['query_brief'], str):
-            state['sub_tasks'] = []
-            state['error'] = "Invalid or missing query_brief in state"
-            return state
-
-        messages = [
-            SystemMessage(content=master_agent_prompt, max_concurrent_logistics_units=3),
-            HumanMessage(content=f"Query brief: {state['query_brief']}")
-        ]
+        self.master_planner = llm.with_structured_output(PlannerOutput)
+        self.worker_graph_builder = graph
         
+        # Create the compiled worker graph that will be reused
+        self.compiled_worker_graph = graph
+
+    def orchestrator(self, state: MasterState):
+        """Generate a plan by breaking down the query into execution jobs"""
+        
+        system_prompt = """You are a master task planner. Given a query, break it down into specific, actionable execution jobs.
+        
+        Each job should be:
+        1. Clear and specific
+        2. Actionable by a specialized worker
+        3. Independent or clearly sequenced
+        4. Focused on a single objective
+        
+        Return a list of execution jobs as strings."""
+        
+        planner_result = self.master_planner.invoke([
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=f"Here is the query brief: {state['query_brief']}")
+        ])
+
+        print("Execution Jobs Generated:", planner_result.executor_jobs)
+        return {"execution_jobs": planner_result.executor_jobs}
+
+    def worker_executor(self, worker_input: dict):
+        """Execute a single job using the worker graph"""
+        
+        # Prepare the initial state for the worker
+        worker_state = {
+            "executor_messages": [HumanMessage(content=worker_input["execution_job"])],
+            "execution_job": worker_input["execution_job"],
+            "executor_data": []
+        }
+        
+        # Execute the worker graph
         try:
-            response = await self.llm.ainvoke(messages)
-            sub_tasks = [task.strip() for task in response.content.split(",") if task.strip() and self._is_valid_task(task.strip())]
-            state['sub_tasks'] = ['track_package']
-            print(f"Sub-tasks: {sub_tasks}")
-        except (ValueError, TypeError, RuntimeError) as e:
-            state['sub_tasks'] = []
-            state['error'] = f"LLM invocation failed: {str(e)}"
-        return state
-
-    def _is_valid_task(self, task: str) -> bool:
-        # Basic validation: non-empty, reasonable length, no special characters
-        return len(task) > 0 and all(c.isalnum() or c.isspace() or c in ".,!?" for c in task)
-
-    async def delegate_to_workers(self, state: MasterState) -> MasterState:
-        if not state.get('sub_tasks'):
-            state['sub_agent_output'] = "No valid sub-tasks generated."
-            return state
-
-        async def process_task(task: str) -> Dict:
-            executor_state = {
-                "executor_messages": [],
-                "execution_job": task,
-                "executor_data": []
-            }
-            if not all(key in executor_state for key in ["executor_messages", "execution_job", "executor_data"]):
-                return {"output": "Invalid executor state"}
+            result = self.compiled_worker_graph.invoke(worker_state)
             
-            try:
-                executor_state = await self.executor_node.llm_call(executor_state)
-                executor_state = await self.executor_node.tool_node(executor_state)
-                return self.executor_node.compress_execution(executor_state)
-            except (ValueError, TypeError, RuntimeError) as e:
-                return {"output": f"Task failed: {str(e)}"}
+            # Return the completed job info
+            return {
+                "completed_jobs": [f"Job: {worker_input['execution_job']} - Status: Completed"],
+                "worker_outputs": [result]
+            }
+        except Exception as e:
+            error_result = {
+                "output": f"Error executing job: {str(e)}",
+                "executor_data": [f"Error: {str(e)}"],
+                "executor_messages": []
+            }
+            return {
+                "completed_jobs": [f"Job: {worker_input['execution_job']} - Status: Failed - {str(e)}"],
+                "worker_outputs": [error_result]
+            }
 
-        tasks = [process_task(task) for task in state['sub_tasks']]
-        worker_outputs = await asyncio.gather(*tasks, return_exceptions=True)
-
-        valid_outputs = [
-            output.get("output", "") if isinstance(output, dict) else f"Task failed: {str(output)}"
-            for output in worker_outputs
+    def assign_workers(self, state: MasterState):
+        """Assign a worker to each execution job using Send"""
+        return [
+            Send("worker_executor", {"execution_job": job}) 
+            for job in state["execution_jobs"]
         ]
-        state['sub_agent_output'] = "\n".join(valid_outputs)
-        print('Sub Agent Output', state['sub_agent_output'])
-        return state
 
-    async def complete_execution(self, state: MasterState) -> MasterState:
-        if not state.get('sub_agent_output') or not isinstance(state['sub_agent_output'], str):
-            state['sub_agent_output'] = "No valid output generated."
-        return state
+    def synthesizer(self, state: MasterState):
+        """Combine all completed jobs into a final output"""
+        
+        # Create a synthesis prompt
+        synthesis_prompt = f"""
+        Original Query: {state['query_brief']}
+        
+        Completed Jobs Summary:
+        {chr(10).join([f"- {job}" for job in state['completed_jobs']])}
+        
+        Detailed Worker Outputs:
+        {chr(10).join([f"Output {i+1}: {output.get('output', 'No output')}" for i, output in enumerate(state['worker_outputs'])])}
+        
+        Please synthesize all the work into a comprehensive final response that addresses the original query.
+        """
+        
+        synthesis_result = self.llm.invoke([
+            SystemMessage(content="You are a synthesis expert. Combine the worker outputs into a coherent final response."),
+            HumanMessage(content=synthesis_prompt)
+        ])
+        
+        return {"final_output": synthesis_result.content}

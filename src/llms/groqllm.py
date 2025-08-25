@@ -10,7 +10,7 @@ class GroqLLM:
         try:
             print(os.getenv("GROQ_API_KEY"))
             os.environ["GROQ_API_KEY"] = self.groq_api_key = os.getenv("GROQ_API_KEY")
-            llm=ChatGroq(api_key=self.groq_api_key, model="meta-llama/llama-4-maverick-17b-128e-instruct", streaming=False)
+            llm=ChatGroq(api_key=self.groq_api_key, model="gemma2-9b-it", streaming=False)
             return llm
         except Exception as e:
             raise ValueError(f"Error occurred with exception: {e}")
