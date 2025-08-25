@@ -1,56 +1,55 @@
 from langgraph.graph import StateGraph, START, END
 from src.states.actionState import ExecutorState, ExecutorOutputState
-from src.nodes.actionNode import llm_call, tool_node, compress_execution
 
-# Max iterations safeguard
-MAX_ITERATIONS = 5
-
-def route_after_llm(state: ExecutorState):
-    """Decide whether to call a tool or finalize."""
-    last_msg = state["executor_messages"][-1]
-    if getattr(last_msg, "tool_calls", None):
-        return "tool_node"
-    return "compress_execution"
-
-def guard_llm(state: ExecutorState):
-    """
-    Router with iteration safeguard.
-    Prevents infinite tool/LLM loops.
-    """
-    iteration_count = state.get("iteration_count", 0) + 1
-    state["iteration_count"] = iteration_count
-    if iteration_count > MAX_ITERATIONS:
-        # Force finalize if too many iterations
-        return "compress_execution"
-    return route_after_llm(state)
+from src.nodes.actionNode import ExecutorNode
+from src.llms.groqllm import GroqLLM
 
 
-# -----------------------------
-# Graph Construction
-# -----------------------------
-agent_builder = StateGraph(ExecutorState, output=ExecutorOutputState)
+class ExecutorGraphBuilder:
+    def __init__(self, llm):
+        self.llm = llm 
+        self.graph = StateGraph(ExecutorState, output=ExecutorOutputState)
+    
+    def build_executor_graph(self):
+        """
+        Build a graph to build the executor
 
-# Add nodes
-agent_builder.add_node("llm_call", llm_call)
-agent_builder.add_node("tool_node", tool_node)
-agent_builder.add_node("compress_execution", compress_execution)
+        """
+        self.executor_node_obj = ExecutorNode(self.llm)
+        print(self.llm)
 
-# Flow
-agent_builder.add_edge(START, "llm_call")
+        self.graph.add_node("llm_call", self.executor_node_obj.llm_call)
+        self.graph.add_node("tool_node", self.executor_node_obj.tool_node)
+        self.graph.add_node("compress_execution", self.executor_node_obj.compress_execution)
 
-agent_builder.add_conditional_edges(
-    "llm_call",
-    guard_llm,
-    {
-        "tool_node": "tool_node",
-        "compress_execution": "compress_execution",
-    },
-)
+        # Flow
+        self.graph.add_edge(START, "llm_call")
 
-# After tools, loop back into LLM
-agent_builder.add_edge("tool_node", "llm_call")
+        self.graph.add_conditional_edges(
+            "llm_call",
+            self.executor_node_obj.guard_llm,
+            {
+                "tool_node": "tool_node",
+                "compress_execution": "compress_execution",
+            },
+        )
 
-# Exit
-agent_builder.add_edge("compress_execution", END)
+        # After tools, loop back into LLM
+        self.graph.add_edge("tool_node", "llm_call")
 
-graph = agent_builder.compile()
+        # Exit
+        self.graph.add_edge("compress_execution", END)
+
+        return self.graph
+    
+    def setup_graph(self):
+        return self.graph.compile()
+    
+
+
+
+llm=GroqLLM().get_llm()
+
+## get the graph
+graph_builder=ExecutorGraphBuilder(llm)
+graph=graph_builder.build_executor_graph().compile()

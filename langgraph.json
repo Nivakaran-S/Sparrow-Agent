@@ -1,7 +1,7 @@
 {
     "dependencies": ["."],
     "graphs": {
-        "scope_research": "./src/graphs/queryGraph.py:query_graph",
+        "scope_research": "./src/graphs/queryGraph.py:graph",
         "execution_agent_graph": "./src/graphs/actionGraph.py:graph"
     },
     "env": "./env"
