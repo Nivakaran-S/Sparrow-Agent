@@ -15,35 +15,60 @@ logger = logging.getLogger(__name__)
 llm = GroqLLM().get_llm()
 queryNode = QueryNode(llm)
 
-def convert_sparrow_to_master(state: SparrowAgentState) -> MasterState:
-    return MasterState(
-        query_brief=state.get("query_brief", ""),
-        execution_jobs=[],
-        completed_jobs=[],
-        worker_outputs=[],
-        final_output=''
-    )
+def convert_sparrow_to_master(state: SparrowAgentState) -> dict:
+    """Convert SparrowAgentState to master graph input format"""
+    return {
+        "query_brief": state.get("query_brief", ""),
+        "execution_jobs": [],
+        "completed_jobs": [],
+        "worker_outputs": [],
+        "final_output": ''
+    }
 
-def update_sparrow_from_master(sparrow_state: SparrowAgentState, master_state: MasterState) -> SparrowAgentState:
-    sparrow_state["master_result"] = master_state.get("final_output", "")
+def update_sparrow_from_master(sparrow_state: SparrowAgentState, master_state: dict) -> SparrowAgentState:
+    """Update sparrow state with master results"""
+    # Add the final result as a message and update notes
+    from langchain_core.messages import AIMessage
+    
+    final_output = master_state.get("final_output", "")
+    if final_output:
+        sparrow_state["messages"] = sparrow_state.get("messages", []) + [AIMessage(content=final_output)]
+        sparrow_state["final_message"] = final_output
+        
+    # Add execution details to notes
+    execution_jobs = master_state.get("execution_jobs", [])
+    completed_jobs = master_state.get("completed_jobs", [])
+    
+    if execution_jobs:
+        sparrow_state["notes"] = sparrow_state.get("notes", []) + [f"Execution jobs: {', '.join(execution_jobs)}"]
+    
+    if completed_jobs:
+        sparrow_state["notes"] = sparrow_state.get("notes", []) + [f"Completed: {', '.join(completed_jobs)}"]
+    
     return sparrow_state
 
 def route_after_clarification(state: SparrowAgentState) -> str:
-    """Route based on clarification status"""
+    """Route based on clarification status from queryNode response"""
     
-    # Check if we have an error
-    if state.get("error"):
-        print(f"Error detected: {state.get('error')}")
-        return "__end__"
+    # Check messages for clarification status
+    messages = state.get("messages", [])
+    if not messages:
+        return "need_clarification"
     
-    # Check clarification status
-    clarification_complete = state.get("clarification_complete", False)
-    needs_clarification = state.get("needs_clarification", True)
+    # Get the last AI message to check if clarification is complete
+    last_message = messages[-1] if messages else None
     
-    print(f"Clarification complete: {clarification_complete}")
-    print(f"Needs clarification: {needs_clarification}")
+    # Check notes for clarification indicators
+    notes = state.get("notes", [])
+    clarification_notes = [note for note in notes if "clarification" in note.lower()]
     
-    if clarification_complete or not needs_clarification:
+    # Simple heuristic: if we have enough back-and-forth or explicit completion
+    if len(messages) >= 4:  # User query + AI clarification + User response + AI confirmation
+        return "write_query_brief"
+    elif any("complete" in note.lower() or "sufficient" in note.lower() for note in clarification_notes):
+        return "write_query_brief"
+    elif len(messages) > 10:  # Prevent infinite clarification
+        print("Too many clarification rounds, proceeding to query brief")
         return "write_query_brief"
     else:
         return "need_clarification"
@@ -51,46 +76,58 @@ def route_after_clarification(state: SparrowAgentState) -> str:
 def route_after_query_brief(state: SparrowAgentState) -> str:
     """Route after query brief creation"""
     
-    # Check for errors
-    if state.get("error"):
-        print(f"Error in query brief: {state.get('error')}")
-        return "__end__"
-    
-    # Check if query brief is adequate
+    # Check if query brief exists and is adequate
     query_brief = state.get("query_brief", "")
-    query_brief_complete = state.get("query_brief_complete", False)
     
-    if query_brief_complete and query_brief and len(query_brief.strip()) > 10:
+    if query_brief and len(query_brief.strip()) > 20:  # Reasonable length check
+        print(f"Query brief created: {query_brief[:100]}...")
         return "master_subgraph"
     else:
-        print("Query brief insufficient, going back to clarification")
+        # Check how many times we've tried
+        messages = state.get("messages", [])
+        if len(messages) > 15:  # Prevent infinite loops
+            print("Too many attempts, ending conversation")
+            return "__end__"
+        
+        print("Query brief insufficient or missing, going back to clarification")
+        # Add a note about the issue
+        state["notes"] = state.get("notes", []) + ["Query brief creation failed, requesting more clarification"]
         return "clarify_with_user"
 
 def need_clarification(state: SparrowAgentState) -> SparrowAgentState:
-    """Handle case where clarification is needed - wait for user input"""
-    print("Waiting for user clarification...")
-    # In a real system, this would pause and wait for user input
-    # For now, just return the state as-is
+    """Handle case where clarification is needed"""
+    from langchain_core.messages import AIMessage
+    
+    print("Additional clarification needed.")
+    
+    # Add a message indicating we need more information
+    clarification_msg = AIMessage(
+        content="I need a bit more information to help you effectively. Could you provide more details about your request?"
+    )
+    
+    state["messages"] = state.get("messages", []) + [clarification_msg]
+    state["notes"] = state.get("notes", []) + ["Requested additional clarification from user"]
+    
     return state
 
-async def run_master_subgraph_async(state: SparrowAgentState) -> SparrowAgentState:
+def run_master_subgraph(state: SparrowAgentState) -> SparrowAgentState:
+    """Run the master subgraph - using sync version to avoid async issues with Send"""
     try:
         print("Running master subgraph...")
         master_input = convert_sparrow_to_master(state)
-        master_result = await master_graph.ainvoke(master_input)
+        
+        # Use invoke instead of ainvoke to avoid issues with Send
+        master_result = master_graph.invoke(master_input)
+        
         return update_sparrow_from_master(state, master_result)
+        
     except Exception as e:
         logger.error(f"Master subgraph failed: {e}")
         return {**state, "error": str(e)}
 
-def run_master_subgraph(state: SparrowAgentState) -> SparrowAgentState:
-    try:
-        return asyncio.run(run_master_subgraph_async(state))
-    except RuntimeError as e:
-        if "asyncio.run() cannot be called from a running event loop" in str(e):
-            loop = asyncio.get_event_loop()
-            return loop.run_until_complete(run_master_subgraph_async(state))
-        raise e
+def route_after_need_clarification(state: SparrowAgentState) -> str:
+    """Route after need_clarification node - always end to wait for user input"""
+    return "__end__"
 
 # Build the graph
 sparrowAgentBuilder = StateGraph(SparrowAgentState, input_schema=SparrowInputState)
@@ -113,8 +150,15 @@ sparrowAgentBuilder.add_conditional_edges(
     }
 )
 
-# From need_clarification, go back to clarify_with_user (after user provides input)
-sparrowAgentBuilder.add_edge("need_clarification", END)  # Or create a loop back
+# Improved clarification flow
+sparrowAgentBuilder.add_conditional_edges(
+    "need_clarification",
+    route_after_need_clarification,
+    {
+        "clarify_with_user": "clarify_with_user",
+        "__end__": END
+    }
+)
 
 sparrowAgentBuilder.add_conditional_edges(
     "write_query_brief",
@@ -128,5 +172,6 @@ sparrowAgentBuilder.add_conditional_edges(
 
 sparrowAgentBuilder.add_edge("master_subgraph", END)
 
+# Compile with memory saver for state persistence
 
 sparrowAgent = sparrowAgentBuilder.compile()
