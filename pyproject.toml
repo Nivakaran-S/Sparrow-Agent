@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.116.1",
+    "flask>=3.1.2",
     "langchain>=0.3.27",
     "langchain-community>=0.3.27",
     "langchain-core>=0.3.74",
@@ -14,6 +15,7 @@ dependencies = [
     "langgraph-cli[inmem]>=0.3.8",
     "streamlit>=1.48.1",
     "tavily-python>=0.7.11",
+    "uuid>=1.30",
     "uvicorn>=0.35.0",
     "watchdog>=6.0.0",
 ]

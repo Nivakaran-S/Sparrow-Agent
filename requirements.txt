@@ -9,3 +9,5 @@ watchdog
 langgraph-cli[inmem]
 streamlit
 tavily-python
+flask
+uuid

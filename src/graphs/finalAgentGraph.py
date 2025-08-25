@@ -172,6 +172,4 @@ sparrowAgentBuilder.add_conditional_edges(
 
 sparrowAgentBuilder.add_edge("master_subgraph", END)
 
-# Compile with memory saver for state persistence
-
 sparrowAgent = sparrowAgentBuilder.compile()
