@@ -4,8 +4,6 @@ from src.utils.prompts import execution_agent_prompt, compress_execution_system_
 from src.utils.utils import think_tool, track_package, get_user_information, estimated_time_analysis
 import logging
 
-logger = logging.getLogger(__name__)
-
 tools = [think_tool, track_package, get_user_information, estimated_time_analysis]
 tools_by_name = {tool.name: tool for tool in tools}
 
@@ -60,7 +58,6 @@ class ExecutorNode:
             }
             
         except Exception as e:
-            logger.error(f"LLM call failed: {e}")
             return {
                 **state,
                 "error": str(e),
@@ -143,7 +140,6 @@ class ExecutorNode:
             }
             
         except Exception as e:
-            logger.error(f"Tool node failed: {e}")
             return {
                 **state,
                 "error": f"Tool execution failed: {str(e)}"
@@ -177,7 +173,6 @@ class ExecutorNode:
             }
             
         except Exception as e:
-            logger.error(f"Compression failed: {e}")
             return {
                 "output": f"Execution completed with errors: {str(e)}",
                 "executor_data": state.get("executor_data", []),
@@ -198,7 +193,6 @@ class ExecutorNode:
             
             return "tool_node" if has_tool_calls else "compress_execution"
         except Exception as e:
-            logger.error(f"Routing failed: {e}")
             return "compress_execution"
 
     def guard_llm(self, state: dict) -> str:

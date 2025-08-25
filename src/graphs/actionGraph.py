@@ -50,6 +50,6 @@ class ExecutorGraphBuilder:
 
 llm=GroqLLM().get_llm()
 
-## get the graph
+## Creating the graph
 graph_builder=ExecutorGraphBuilder(llm)
 graph=graph_builder.build_executor_graph().compile()

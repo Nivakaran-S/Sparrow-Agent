@@ -27,9 +27,7 @@ class MasterBuilder:
 
 
 
-# ----------------------------
-# 5) INITIALIZE & RUN
-# ----------------------------
+# Building the graph
 llm = GroqLLM().get_llm()
 graph_builder = MasterBuilder(llm)
 master_graph = graph_builder.build_master_graph()

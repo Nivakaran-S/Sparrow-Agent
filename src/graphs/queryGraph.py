@@ -23,6 +23,7 @@ class QueryGraphBuilder:
         self.graph.add_node("write_query_brief", self.query_node_obj.write_query_brief)
 
         self.graph.add_edge(START, "clarify_with_user")
+        self.graph.add_edge("clarify_with_user", "write_query_brief")
         self.graph.add_edge("write_query_brief", END)
 
         return self.graph

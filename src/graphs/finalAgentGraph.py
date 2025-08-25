@@ -62,7 +62,7 @@ def route_after_clarification(state: SparrowAgentState) -> str:
     notes = state.get("notes", [])
     clarification_notes = [note for note in notes if "clarification" in note.lower()]
     
-    # Simple heuristic: if we have enough back-and-forth or explicit completion
+    
     if len(messages) >= 4:  # User query + AI clarification + User response + AI confirmation
         return "write_query_brief"
     elif any("complete" in note.lower() or "sufficient" in note.lower() for note in clarification_notes):
@@ -85,12 +85,11 @@ def route_after_query_brief(state: SparrowAgentState) -> str:
     else:
         # Check how many times we've tried
         messages = state.get("messages", [])
-        if len(messages) > 15:  # Prevent infinite loops
+        if len(messages) > 15:  
             print("Too many attempts, ending conversation")
             return "__end__"
         
         print("Query brief insufficient or missing, going back to clarification")
-        # Add a note about the issue
         state["notes"] = state.get("notes", []) + ["Query brief creation failed, requesting more clarification"]
         return "clarify_with_user"
 

@@ -13,8 +13,6 @@ class MasterOrchestrator:
     def __init__(self, llm):
         self.llm = llm
         self.master_planner = llm.with_structured_output(PlannerOutput)
-        
-        # Compile the worker graph once
         self.compiled_worker_graph = graph
 
     def classify_execution_job(self, job_description: str) -> str:

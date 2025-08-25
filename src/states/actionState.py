@@ -26,7 +26,7 @@ class ExecutorOutputState(TypedDict):
     executor_messages and output from the execution process.
 
     """
-    output: str  # Fixed: Removed invalid operator.or_
+    output: str  
     executor_data: List[str]
     executor_messages: Annotated[Sequence[BaseMessage], add_messages]
 
