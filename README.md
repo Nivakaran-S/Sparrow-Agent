@@ -80,7 +80,7 @@ sparrow-agent/
 ## Contributions
 - **Enhancements**: Add new tools to `workerAgent.py` or optimize graph logic.
 - **Performance**: Improve async handling or worker scalability.
-- **UI/UX**: Upgrade `index.html` and `static/` assets.
+- **UI/UX**: Upgrade `index.html`
 
 
 ## Acknowledgements
