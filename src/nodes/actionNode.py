@@ -1,10 +1,10 @@
 from pydantic import BaseModel, Field
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage, filter_messages
 from src.utils.prompts import execution_agent_prompt, compress_execution_system_prompt, compress_execution_human_message
-from src.utils.utils import think_tool, track_package, get_user_information, estimated_time_analysis
+from src.utils.utils import think_tool, track_package, estimated_time_analysis, get_today_str
 import logging
 
-tools = [think_tool, track_package, get_user_information, estimated_time_analysis]
+tools = [think_tool, track_package, estimated_time_analysis]
 tools_by_name = {tool.name: tool for tool in tools}
 
 class ExecutorNode:
@@ -20,9 +20,9 @@ class ExecutorNode:
         self.tools = tools
         self.tools_by_name = {tool.name: tool for tool in tools}
         self.model_with_tools = llm.bind_tools(tools)
-        self.MAX_ITERATIONS = 3  # Increased to allow tool usage
-        self.execution_agent_prompt = execution_agent_prompt
-        self.compress_execution_system_prompt = compress_execution_system_prompt
+        self.MAX_ITERATIONS = 6  # Increased to allow more tool calls (including think_tool)
+        self.execution_agent_prompt_template = execution_agent_prompt
+        self.compress_execution_system_prompt_template = compress_execution_system_prompt
         self.compress_execution_human_message = compress_execution_human_message
         
         # Debug tool binding
@@ -37,11 +37,13 @@ class ExecutorNode:
             print("EXECUTOR MESSAGES MESSAGES", existing_messages)
             print("EXECUTION JOB", execution_job)
 
-            # If no existing messages, add the execution job as initial human message
+                        # If no existing messages, add the execution job as initial human message
             if not existing_messages and execution_job:
                 existing_messages = [HumanMessage(content=execution_job)]
             
-            messages = [SystemMessage(content=self.execution_agent_prompt)] + existing_messages
+            # Format the prompt with current date
+            formatted_prompt = self.execution_agent_prompt_template.format(date=get_today_str())
+            messages = [SystemMessage(content=formatted_prompt)] + existing_messages
             
             print(f"Calling LLM with {len(messages)} messages")
             print(f"Last message: {messages[-1] if messages else 'No messages'}")
@@ -151,8 +153,11 @@ class ExecutorNode:
             execution_job = state.get("execution_job", "Complete the assigned task")
             executor_messages = state.get("executor_messages", [])
             
+            # Format the system prompt with current date
+            formatted_system_prompt = self.compress_execution_system_prompt_template.format(date=get_today_str())
+            
             messages = [
-                SystemMessage(content=self.compress_execution_system_prompt),
+                SystemMessage(content=formatted_system_prompt),
                 *executor_messages,
                 HumanMessage(content=self.compress_execution_human_message.format(
                     shipment_request=execution_job

@@ -10,4 +10,7 @@ langgraph-cli[inmem]
 streamlit
 tavily-python
 flask
+python-dotenv
+requests
+pymongo
 uuid

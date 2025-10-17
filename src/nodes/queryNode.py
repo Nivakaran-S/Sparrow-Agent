@@ -19,12 +19,17 @@ class QueryNode:
         Determine if the user's request contains sufficient information to proceed.
         Returns updated state with clarification status.
         """
-        structured_output_model = self.llm.with_structured_output(ClarifyWithUser)
-        
         try:
+            # Use structured output with method="json_mode" for better compatibility
+            structured_output_model = self.llm.with_structured_output(
+                ClarifyWithUser,
+                method="json_mode",
+                include_raw=False
+            )
+            
             response = structured_output_model.invoke([
                 SystemMessage(
-                    content="Route the input to yes or no based on the need of clarification of the query"
+                    content="You are a helpful assistant that responds in JSON format. Route the input to yes or no based on the need of clarification of the query."
                 ),
                 HumanMessage(
                     content=clarification_with_user_instructions.format(
@@ -56,8 +61,16 @@ class QueryNode:
             
         except Exception as e:
             print(f"Error in clarify_with_user: {e}")
+            print(f"Error type: {type(e).__name__}")
+            import traceback
+            traceback.print_exc()
+            
+            # Fallback: Ask for clarification if there's an error
             return {
                 **state,
+                "messages": state.get("messages", []) + [
+                    AIMessage(content="I'd be happy to help! Could you please provide more details about what you need? For example, if you want to track a package, please share the tracking number.")
+                ],
                 "clarification_complete": False,
                 "needs_clarification": True,
                 "error": str(e)
@@ -68,7 +81,12 @@ class QueryNode:
         Transform the conversation history into a comprehensive customer query brief.
         """
         try:
-            structured_output_model = self.llm.with_structured_output(CustomerQuestion)
+            # Use structured output with json_mode for better compatibility
+            structured_output_model = self.llm.with_structured_output(
+                CustomerQuestion,
+                method="json_mode",
+                include_raw=False
+            )
             
             messages = state.get("messages", [])
             print("STATE MESSAGES:", messages)
@@ -85,14 +103,13 @@ class QueryNode:
                 messages=get_buffer_string(messages),
                 date=get_today_str()
             )
-            print("PROMPT:", prompt)
-            
-            # Test raw response first
-            raw_response = self.llm.invoke([HumanMessage(content=prompt)])
-            print("RAW MODEL RESPONSE:", raw_response)
+            print("PROMPT:", prompt[:200], "...")  # Print first 200 chars only
             
             # Get structured response
-            response = structured_output_model.invoke([HumanMessage(content=prompt)])
+            response = structured_output_model.invoke([
+                SystemMessage(content="You are a helpful assistant that responds in JSON format."),
+                HumanMessage(content=prompt)
+            ])
             print("STRUCTURED RESPONSE:", response)
             
             if response is None:
@@ -112,8 +129,23 @@ class QueryNode:
             
         except Exception as e:
             print(f"Error in write_query_brief: {e}")
+            print(f"Error type: {type(e).__name__}")
+            import traceback
+            traceback.print_exc()
+            
+            # Fallback: Create a simple query brief from the messages
+            messages = state.get("messages", [])
+            if messages:
+                # Extract the last user message as the query brief
+                user_messages = [msg.content for msg in messages if hasattr(msg, 'type') and msg.type == 'human']
+                fallback_brief = user_messages[-1] if user_messages else "Help with parcel query"
+            else:
+                fallback_brief = "Help with parcel query"
+            
             return {
                 **state,
-                "query_brief": "",
+                "query_brief": fallback_brief,
+                "master_messages": [HumanMessage(content=fallback_brief)],
+                "query_brief_complete": True,
                 "error": str(e)
             }

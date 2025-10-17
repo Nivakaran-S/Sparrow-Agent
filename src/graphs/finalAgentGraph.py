@@ -50,28 +50,27 @@ def update_sparrow_from_master(sparrow_state: SparrowAgentState, master_state: d
 def route_after_clarification(state: SparrowAgentState) -> str:
     """Route based on clarification status from queryNode response"""
     
-    # Check messages for clarification status
+    # Check if clarification_complete flag is set (most reliable)
+    clarification_complete = state.get("clarification_complete", False)
+    needs_clarification = state.get("needs_clarification", True)
+    
+    if clarification_complete or not needs_clarification:
+        print("Clarification complete, proceeding to query brief")
+        return "write_query_brief"
+    
+    # Check messages for clarification status as fallback
     messages = state.get("messages", [])
     if not messages:
         return "need_clarification"
     
-    # Get the last AI message to check if clarification is complete
-    last_message = messages[-1] if messages else None
-    
-    # Check notes for clarification indicators
-    notes = state.get("notes", [])
-    clarification_notes = [note for note in notes if "clarification" in note.lower()]
-    
-    
-    if len(messages) >= 4:  # User query + AI clarification + User response + AI confirmation
-        return "write_query_brief"
-    elif any("complete" in note.lower() or "sufficient" in note.lower() for note in clarification_notes):
-        return "write_query_brief"
-    elif len(messages) > 10:  # Prevent infinite clarification
+    # Prevent infinite clarification loops
+    if len(messages) > 10:
         print("Too many clarification rounds, proceeding to query brief")
         return "write_query_brief"
-    else:
-        return "need_clarification"
+    
+    # Default: needs more clarification
+    print("More clarification needed")
+    return "need_clarification"
 
 def route_after_query_brief(state: SparrowAgentState) -> str:
     """Route after query brief creation"""

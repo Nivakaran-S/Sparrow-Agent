@@ -5,6 +5,7 @@ from src.nodes.actionNode import ExecutorNode
 import asyncio
 from typing import List, Dict
 from src.utils.prompts import master_agent_prompt
+from src.utils.utils import get_today_str
 from src.states.masterState import PlannerOutput
 from langgraph.constants import Send
 from src.graphs.actionGraph import graph
@@ -14,20 +15,7 @@ class MasterOrchestrator:
         self.llm = llm
         self.master_planner = llm.with_structured_output(PlannerOutput)
         self.compiled_worker_graph = graph
-
-    def classify_execution_job(self, job_description: str) -> str:
-        """Map job description to specific action identifier"""
-        job_lower = job_description.lower()
-        
-        if 'track' in job_lower and ('package' in job_lower or 'parcel' in job_lower):
-            return 'track_package'
-        elif 'weather' in job_lower:
-            return 'get_weather'
-        elif 'search' in job_lower or 'find' in job_lower:
-            return 'web_search'
-        # Add more action mappings as needed
-        else:
-            return 'general_query'
+        self.master_agent_prompt_template = master_agent_prompt
 
     def orchestrator(self, state: MasterState):
         """Generate a plan by breaking down the query into execution jobs"""
@@ -54,16 +42,16 @@ class MasterOrchestrator:
         """Execute a single job using the worker graph"""
         
         job_description = worker_input["execution_job"]
-        action_type = self.classify_execution_job(job_description)
         
         # Prepare the initial state for the worker
+        # Pass the full job description as the execution_job - the worker will use available tools
         worker_state = {
             "executor_messages": [HumanMessage(content=job_description)],
-            "execution_job": action_type,  # This should be 'track_package', 'get_weather', etc.
+            "execution_job": job_description,  # Pass the full job description
             "executor_data": []
         }
         
-        print(f"Executing job: {job_description} -> Action: {action_type}")
+        print(f"Executing job: {job_description}")
         
         # Execute the worker graph
         try:
@@ -71,7 +59,7 @@ class MasterOrchestrator:
             
             # Return the completed job info
             return {
-                "completed_jobs": [f"Job: {job_description} - Action: {action_type} - Status: Completed"],
+                "completed_jobs": [f"Job: {job_description} - Status: Completed"],
                 "worker_outputs": [result]
             }
         except Exception as e:
@@ -81,7 +69,7 @@ class MasterOrchestrator:
                 "executor_messages": []
             }
             return {
-                "completed_jobs": [f"Job: {job_description} - Action: {action_type} - Status: Failed - {str(e)}"],
+                "completed_jobs": [f"Job: {job_description} - Status: Failed - {str(e)}"],
                 "worker_outputs": [error_result]
             }
 

@@ -1,13 +1,13 @@
 from langgraph.graph import StateGraph, START, END
-from src.states.actionState import ExecutorState, ExecutorOutputState
+from src.states.masterState import ExecutorState, ExecutorOutputState
 
 from src.nodes.actionNode import ExecutorNode
 from src.llms.groqllm import GroqLLM
 from src.utils.prompts import execution_agent_prompt, compress_execution_human_message, compress_execution_system_prompt
 
-from src.utils.utils import think_tool, track_package, get_user_information, estimated_time_analysis
+from src.utils.utils import think_tool, track_package, estimated_time_analysis
 
-tools = [think_tool, track_package, get_user_information, estimated_time_analysis]
+tools = [think_tool, track_package, estimated_time_analysis]
 
 
 class ExecutorGraphBuilder:

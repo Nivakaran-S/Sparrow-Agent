@@ -5,6 +5,11 @@ from datetime import datetime
 import os
 import sys
 
+# Validate required environment variables before importing graph
+if not os.environ.get('GROQ_API_KEY'):
+    logger = logging.getLogger(__name__)
+    logger.error("GROQ_API_KEY environment variable is not set!")
+    raise ValueError("GROQ_API_KEY environment variable is required. Please set it before running the application.")
 
 from src.graphs.finalAgentGraph import sparrowAgent
 from langchain_core.messages import HumanMessage
